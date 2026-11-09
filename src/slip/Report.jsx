@@ -318,8 +318,9 @@ export default function Report() {
 
   // --- Core Loading Logic ---
   const loadVisitors = useCallback(
-    async (filterType = activeFilter) => {
-      setIsLoading(true);
+    async (filterType = activeFilter, options = {}) => {
+      const silent = options.silent === true;
+      if (!silent) setIsLoading(true);
       try {
         const data = await visitorsApi.list({
           filter: filterType,
@@ -333,7 +334,7 @@ export default function Report() {
       } catch (error) {
         console.error("Unable to load visitors", error);
       }
-      setTimeout(() => setIsLoading(false), 200);
+      if (!silent) setTimeout(() => setIsLoading(false), 200);
     },
     [activeFilter, searchStart, searchEnd, searchName]
   );
@@ -495,7 +496,7 @@ export default function Report() {
     if (!isAuthenticated) return undefined;
     const unsubscribe = visitorsApi.subscribe((payload) => {
           loadSummary();
-          loadVisitors(activeFilter);
+          loadVisitors(activeFilter, { silent: true });
           loadCheckoutQueue();
 
           // --- ส่วนที่ต้องมั่นใจว่ามี เพื่อให้หน้าสลิปเด้งขึ้นมาอัตโนมัติ ---

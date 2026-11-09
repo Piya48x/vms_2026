@@ -128,7 +128,7 @@ export const supabaseVisitorsApi = {
   removeMany: (ids) => reportRequest("removeMany", { ids }),
 
   subscribe(callback) {
-    const timer = setInterval(() => callback({ eventType: "REFRESH" }), 5000);
+    const timer = setInterval(() => callback({ eventType: "REFRESH" }), 30000);
     return () => clearInterval(timer);
   },
 };
