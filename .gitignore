@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+data/uploads/
+backups/*.sql
+backups/*.dump
+*.log
+*.pem
+*.key
+.runtime/
+supabase/.temp/

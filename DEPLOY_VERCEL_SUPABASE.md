@@ -1,0 +1,86 @@
+# Deploy VMS: Vercel + Supabase Free + PostgreSQL Local
+
+โครงสร้างระบบ:
+
+1. หน้าเว็บทำงานบน Vercel
+2. Supabase เก็บข้อมูลชั่วคราว รูป และส่ง Realtime
+3. เครื่องบริษัทใช้ `npm run sync:cloud` ดึงข้อมูลและรูปลง PostgreSQL/`data/uploads`
+4. PostgreSQL Local ไม่ต้องเปิดพอร์ต 5432 ออกอินเทอร์เน็ต
+
+## 1. ตั้งค่า Supabase
+
+สร้าง Supabase Project แบบ Free แล้วจดค่า:
+
+- Project URL
+- Publishable key หรือ legacy anon key
+- Secret key หรือ legacy service_role key (เก็บเฉพาะเครื่องบริษัท)
+- Project ref จาก URL ของ Dashboard
+
+ติดตั้งและ Login Supabase CLI จากโฟลเดอร์โปรเจกต์:
+
+```powershell
+npx.cmd supabase login
+npx.cmd supabase link --project-ref YOUR_PROJECT_REF
+npx.cmd supabase db push --remote
+npx.cmd supabase functions deploy register-visitor --no-verify-jwt
+```
+
+Supabase CLI v3 ใช้ Local stack เป็นค่าเริ่มต้น จึงต้องใส่ `--remote` เพื่อส่ง migration ขึ้น Cloud โดยไม่ต้องใช้ Docker คำสั่งนี้จะสร้างตาราง, RLS, Realtime, RPC summary และ Storage bucket `visitor-photos`
+
+สร้างผู้ใช้หน้า Report:
+
+1. Supabase Dashboard > Authentication > Users
+2. Add user > Create new user
+3. ใส่อีเมลและรหัสผ่านของผู้ดูแล
+
+## 2. ตั้งค่า Vercel
+
+Push โปรเจกต์ขึ้น GitHub แล้ว Import repository ใน Vercel จากนั้นเพิ่ม Environment Variables:
+
+```env
+VITE_DATA_MODE=supabase
+VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
+VITE_SUPABASE_PHOTO_BUCKET=visitor-photos
+VITE_ORG_NAME=T.D.K. INDUSTRIAL
+VITE_PRIVACY_NOTICE_VERSION=2026-10-30
+VITE_PRIVACY_RETENTION_DAYS=90
+```
+
+ห้ามใส่ `SUPABASE_SECRET_KEY` หรือ `SUPABASE_SERVICE_ROLE_KEY` ใน Vercel หรือค่าที่ขึ้นต้นด้วย `VITE_`
+
+Vercel ใช้ค่าจาก `vercel.json` และรัน `npm run build` อัตโนมัติ เมื่อ Deploy เสร็จให้ทดสอบ `/` และ `/Report`
+
+## 3. เปิด Sync บนเครื่องบริษัท
+
+เพิ่มใน `.env` ของเครื่องบริษัท:
+
+```env
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_YOUR_KEY
+SUPABASE_STORAGE_BUCKET=visitor-photos
+CLOUD_SYNC_INTERVAL_SECONDS=60
+```
+
+สร้าง/อัปเดต schema แล้วทดสอบ Sync หนึ่งครั้ง:
+
+```powershell
+npm.cmd run db:init
+npm.cmd run sync:once
+```
+
+ถ้าสำเร็จ เปิดตัว Sync ค้างไว้:
+
+```powershell
+npm.cmd run sync:cloud
+```
+
+ข้อมูลจะเข้า PostgreSQL ตาราง `visitors` และรูปจะอยู่ที่ `data/uploads` หากเครื่องปิด ข้อมูลจะค้างอยู่บน Supabase และ Sync ต่อเมื่อเปิดเครื่องใหม่
+
+## การทดสอบก่อนใช้งานจริง
+
+1. ลงทะเบียนจากลิงก์ Vercel พร้อมรูปหนึ่งรายการ
+2. เข้า `/Report` ด้วยอีเมลผู้ดูแลและตรวจ Realtime
+3. รัน `npm run sync:once`
+4. ตรวจแถวใน PostgreSQL และไฟล์ใน `data/uploads`
+5. ห้ามเปิด PostgreSQL port 5432 บน Router/Internet

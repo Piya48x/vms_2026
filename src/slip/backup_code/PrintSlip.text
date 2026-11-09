@@ -1,0 +1,98 @@
+import React, { useEffect, useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { supabase } from '../supabaseClient'
+
+const ORG = import.meta.env.VITE_ORG_NAME || 'Just-iD Visitor'
+const SITE = import.meta.env.VITE_SITE_NAME || 'Global Securitech'
+const LOGO_URL = import.meta.env.VITE_LOGO_URL || '/logo/f.png' // ใส่ path logo ของคุณ
+
+export default function PrintSlip() {
+  const { id } = useParams()
+  const [v, setV] = useState(null)
+
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.from('visitors').select('*').eq('id', id).single()
+      if (!error) setV(data)
+      setTimeout(() => window.print(), 400)
+    })()
+  }, [id])
+
+  if (!v) return <div style={{ padding: 40 }}>กำลังโหลด...</div>
+
+  return (
+    <div
+      className="receipt"
+      style={{
+        width: 320, // ประมาณ 80mm
+        padding: 12,
+        fontFamily: 'Arial, sans-serif',
+        color: '#111827',
+        fontSize: 12,
+        lineHeight: 1.4
+      }}
+    >
+      {/* Logo */}
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+        <img src={LOGO_URL} alt="logo" style={{ width: 80, height: 'auto' }} />
+      </div>
+
+      {/* Header */}
+      <div style={{ textAlign: 'center', marginBottom: 4 }}>
+        <h1 style={{ fontSize: 16, margin: 0 }}>{ORG}</h1>
+        <div style={{ fontSize: 12 }}>{SITE}</div>
+      </div>
+
+      <div style={{ borderTop: '1px dashed #000', margin: '6px 0' }}></div>
+
+      {/* Visitor Info */}
+      <div style={{ whiteSpace: 'pre-line', marginBottom: 4 }}>
+        <div><b>ID:</b> {String(v.id).padStart(10, '0')}</div>
+        <div><b>ชื่อ:</b> {v.full_name}</div>
+        {v.gender && <div><b>เพศ:</b> {v.gender}</div>}
+        {v.contact_person && <div><b>ติดต่อ:</b> {v.contact_person}</div>}
+        {v.company && <div><b>บริษัท:</b> {v.company}</div>}
+        {v.vehicle_plate && <div><b>ทะเบียนรถ:</b> {v.vehicle_plate}</div>}
+        {v.purpose && <div><b>ประสงค์:</b> {v.purpose}</div>}
+        <div><b>เวลาเข้า:</b> {v.checkin_time ? new Date(v.checkin_time).toLocaleString() : ''}</div>
+        <br />
+        <br />
+        <div><b>เวลาออก:</b> {v.checkout_time ? new Date(v.checkout_time).toLocaleString() : '................................'}</div>
+      </div>
+
+      <div style={{ borderTop: '1px dashed #000', margin: '6px 0' }}></div>
+
+      {/* QR Code */}
+      {v.qr_data && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
+          <img src={v.qr_data} alt="qr" style={{ width: 100, height: 100 }} />
+        </div>
+      )}
+
+      {/* Photo */}
+      {v.photo_url && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
+          <img src={v.photo_url} alt="photo" style={{ width: 140, height: 90, objectFit: 'cover', border: '1px solid #ddd' }} />
+        </div>
+      )}
+
+      {/* Signature Box */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{
+          width: 100,
+          height: 50,
+          border: '1px solid #000',
+          borderRadius: 4,
+          marginBottom: 2
+        }}></div>
+        <div style={{ fontSize: 11, textAlign: 'center' }}>(ลงชื่อผู้ได้รับการติดต่อ)</div>
+      </div>
+
+      {/* Footer Note */}
+      <div style={{ fontSize: 10, textAlign: 'center' }}>
+        (ตั๋วนี้ต้องนำไปให้เจ้าหน้าที่เมื่อเสร็จธุระ) <br />
+        โปรดปฏิบัติตามนโยบายความปลอดภัยของหน่วยงาน
+      </div>
+    </div>
+  )
+}

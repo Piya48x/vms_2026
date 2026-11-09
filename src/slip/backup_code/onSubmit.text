@@ -1,0 +1,81 @@
+ const onSubmit = async (e) => {
+  e.preventDefault();
+  setLoading(true);
+
+  try {
+    // 1️⃣ เตรียม payload สำหรับ insert
+    const payload = {
+      ...form,
+      checkin_time: new Date().toISOString(),
+      checkout_time: null,
+      photo_url: null,
+      qr_data: null,
+    };
+
+    // 2️⃣ Insert ข้อมูลลง Supabase
+    const { data, error } = await supabase
+      .from('visitors')
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+
+    // 3️⃣ Upload รูปถ่าย (ถ้ามี)
+    let photoUrl = null;
+    if (photoDataUrl) {
+      const blob = await (await fetch(photoDataUrl)).blob();
+      const fileName = `${data.id}.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from('photos')
+        .upload(`photos/${fileName}`, blob, { contentType: 'image/jpeg', upsert: true });
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = supabase.storage
+        .from('photos')
+        .getPublicUrl(`photos/${fileName}`);
+      photoUrl = publicData?.publicUrl || null;
+
+      // อัปเดท photo_url
+      if (photoUrl) {
+        await supabase.from('visitors').update({ photo_url: photoUrl }).eq('id', data.id);
+      }
+    }
+
+    // 4️⃣ สร้าง QR code เป็น URL → /visitor/:id
+    const qrUrl = `${window.location.origin}/visitor/${data.id}`;
+    const qrDataUrl = await QRCode.toDataURL(qrUrl);
+
+    // 5️⃣ อัปเดท QR code ใน DB
+    await supabase.from('visitors').update({ qr_data: qrDataUrl }).eq('id', data.id);
+
+    // 6️⃣ Reset form + รูป
+    setForm({
+      id_type: 'citizen',
+      id_number: '',
+      full_name: '',
+      gender: '',
+      company: '',
+      phone: '',
+      contact_person: '',
+      purpose: '',
+      vehicle_plate: '',
+      vehicle_type: '',
+      chip_serial: '',
+      note: ''
+    });
+    setPhotoDataUrl('');
+
+    // 7️⃣ โหลด visitor ใหม่
+    await loadVisitors();
+
+    // 8️⃣ เปิดหน้าปริ้นสลิป (ถ้าต้องการ)
+    window.open(`/print/${data.id}`, '_blank');
+
+    // alert('บันทึกเรียบร้อย! QR code เป็น URL พร้อมสแกน');
+  } catch (err) {
+    console.error(err);
+    alert('บันทึกไม่สำเร็จ: ' + err.message);
+  } finally {
+    setLoading(false);
+  }
+};

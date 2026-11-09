@@ -1,0 +1,480 @@
+import React, { useEffect, useRef, useState } from 'react'
+import { supabase } from '../supabaseClient'
+import ExcelJS from 'exceljs'
+import { saveAs } from 'file-saver'
+import { useNavigate } from 'react-router-dom'
+
+const USERNAME = '1234'
+const PASSWORD = '1234'
+const ORG = import.meta.env.VITE_ORG_NAME || 'Just-iD Visitor'
+const SITE = import.meta.env.VITE_SITE_NAME || 'Global Securitech'
+
+export default function Report() {
+  // ---------------- STATE ----------------
+  const [visitors, setVisitors] = useState([])
+  const [selectedIds, setSelectedIds] = useState([])
+
+  const [searchStart, setSearchStart] = useState('')
+  const [searchEnd, setSearchEnd] = useState('')
+  const [searchName, setSearchName] = useState('')
+
+  // summary counters
+  const [countToday, setCountToday] = useState(0)
+  const [countUncheckout, setCountUncheckout] = useState(0)
+  const [countRange, setCountRange] = useState(0)
+  const [countCheckoutToday, setCountCheckoutToday] = useState(0)
+
+  const printedIdsRef = useRef(new Set())
+  const hasPromptedRef = useRef(false)
+  const navigate = useNavigate()
+
+  // ---------------- LOGIN ONCE ----------------
+  useEffect(() => {
+    if (hasPromptedRef.current) return
+    hasPromptedRef.current = true
+    const u = prompt('กรอก Username:')
+    const p = prompt('กรอก Password:')
+    if (!(u === USERNAME && p === PASSWORD)) {
+      alert('❌ Username หรือ Password ไม่ถูกต้อง')
+      navigate('/')
+    }
+  }, [navigate])
+
+  // ---------------- HELPERS ----------------
+  const startOfDay = (d = new Date()) => {
+    const x = new Date(d)
+    x.setHours(0,0,0,0)
+    return x
+  }
+  const endOfDay = (d = new Date()) => {
+    const x = new Date(d)
+    x.setHours(23,59,59,999)
+    return x
+  }
+
+  const toISO = (d) => new Date(d).toISOString()
+
+  // ---------------- LOADERS ----------------
+  const loadVisitors = async (startDate = '', endDate = '', name = '') => {
+    let q = supabase.from('visitors').select('*').order('id', { ascending: false })
+
+    if (startDate) {
+      const s = startOfDay(new Date(startDate))
+      q = q.gte('checkin_time', s.toISOString())
+    }
+    if (endDate) {
+      const e = endOfDay(new Date(endDate))
+      q = q.lte('checkin_time', e.toISOString())
+    }
+    if (name) q = q.ilike('full_name', `%${name}%`)
+
+    const { data, error } = await q
+    if (!error) setVisitors(data || [])
+  }
+
+  const loadSummary = async (startDate = '', endDate = '') => {
+    // วันนี้
+    const tStart = startOfDay()
+    const tEnd = endOfDay()
+
+    // 1) วันนี้เช็คอินกี่คน
+    {
+      const { count } = await supabase
+        .from('visitors')
+        .select('id', { count: 'exact', head: true })
+        .gte('checkin_time', tStart.toISOString())
+        .lte('checkin_time', tEnd.toISOString())
+      setCountToday(count || 0)
+    }
+
+    // 2) ยังไม่เช็คเอาท์ (ทั้งหมดตอนนี้)
+    {
+      const { count } = await supabase
+        .from('visitors')
+        .select('id', { count: 'exact', head: true })
+        .is('checkout_time', null)
+      setCountUncheckout(count || 0)
+    }
+
+    // 3) จำนวนในช่วงวันที่ที่กำลังกรอง (ถ้าไม่เลือกช่วง ให้เท่ากับทั้งหมด)
+    {
+      let q = supabase.from('visitors').select('id', { count: 'exact', head: true })
+      if (startDate) q = q.gte('checkin_time', startOfDay(new Date(startDate)).toISOString())
+      if (endDate) q = q.lte('checkin_time', endOfDay(new Date(endDate)).toISOString())
+      const { count } = await q
+      setCountRange(count || 0)
+    }
+
+    // 4) เช็คเอาท์แล้ววันนี้
+    {
+      const { count } = await supabase
+        .from('visitors')
+        .select('id', { count: 'exact', head: true })
+        .gte('checkout_time', tStart.toISOString())
+        .lte('checkout_time', tEnd.toISOString())
+      setCountCheckoutToday(count || 0)
+    }
+  }
+
+  // init load
+  useEffect(() => {
+    loadVisitors()
+    loadSummary()
+  }, [])
+
+  // reload summary when filters change (เพื่อให้ countRange ตามช่วง)
+  useEffect(() => {
+    loadSummary(searchStart, searchEnd)
+  }, [searchStart, searchEnd])
+
+  // ---------------- REALTIME ----------------
+  useEffect(() => {
+    const channel = supabase
+      .channel('visitors-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'visitors' }, (payload) => {
+        // refresh list ตาม filter ปัจจุบัน
+        loadVisitors(searchStart, searchEnd, searchName)
+        // refresh summary counters
+        loadSummary(searchStart, searchEnd)
+
+        // auto print เมื่อมี insert (ครั้งเดียว)
+        if (payload.eventType === 'INSERT') {
+          const v = payload.new
+          if (v?.id && !printedIdsRef.current.has(v.id)) {
+            printedIdsRef.current.add(v.id)
+            window.open(`/print/${v.id}`, '_blank')
+          }
+        }
+      })
+      .subscribe()
+
+    return () => supabase.removeChannel(channel)
+  }, [searchStart, searchEnd, searchName])
+
+  // ---------------- ACTIONS ----------------
+  const checkOut = async (id) => {
+    await supabase.from('visitors').update({ checkout_time: new Date().toISOString() }).eq('id', id)
+    await loadVisitors(searchStart, searchEnd, searchName)
+    await loadSummary(searchStart, searchEnd)
+  }
+
+  const deleteVisitor = async (ids) => {
+    if (!ids.length) return alert('กรุณาเลือกรายการก่อน')
+    if (!confirm('ต้องการลบรายการที่เลือกใช่หรือไม่?')) return
+    await supabase.from('visitors').delete().in('id', ids)
+    setSelectedIds([])
+    await loadVisitors(searchStart, searchEnd, searchName)
+    await loadSummary(searchStart, searchEnd)
+  }
+
+  // แปลไทย purpose
+  const translatePurpose = (p, other) => {
+    const map = {
+      delivery: 'ส่งของ',
+      meeting: 'ประชุม',
+      interview: 'สัมภาษณ์งาน',
+      customer: 'ลูกค้า',
+      maintenance: 'เข้าซ่อม/บริการ',
+      service: 'เข้าซ่อม/บริการ',
+      visit: 'เยี่ยมชม',
+    }
+    if (p === 'other') return other || 'อื่นๆ'
+    return map[p] || p || ''
+  }
+
+  // Export Excel (หัวตารางไทย + แปลไทย)
+  const exportToExcel = async (ids) => {
+    const rows = ids.length ? visitors.filter(v => ids.includes(v.id)) : visitors
+    if (!rows.length) return alert('กรุณาเลือกรายการก่อน')
+
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('รายงานผู้มาติดต่อ')
+
+    ws.columns = [
+      { header: 'ID', key: 'id', width: 12 },
+      { header: 'ชื่อ', key: 'full_name', width: 25 },
+      { header: 'บริษัท', key: 'company', width: 25 },
+      { header: 'ประสงค์', key: 'purpose', width: 25 },
+      { header: 'ติดต่อ', key: 'contact_person', width: 22 },
+      { header: 'เวลาเข้า', key: 'checkin_time', width: 22 },
+      { header: 'เวลาออก', key: 'checkout_time', width: 22 },
+    ]
+    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    ws.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' }
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } }
+    ws.views = [{ state: 'frozen', ySplit: 1 }]
+    ws.autoFilter = 'A1:G1'
+
+    for (const v of rows) {
+      ws.addRow({
+        id: v.id,
+        full_name: v.full_name || '',
+        company: v.company || '',
+        purpose: translatePurpose(v.purpose, v.other_purpose),
+        contact_person: v.contact_person || '',
+        checkin_time: v.checkin_time ? new Date(v.checkin_time).toLocaleString() : '',
+        checkout_time: v.checkout_time ? new Date(v.checkout_time).toLocaleString() : '',
+      })
+    }
+
+    const buf = await wb.xlsx.writeBuffer()
+    saveAs(new Blob([buf]), `รายงานผู้มาติดต่อ_${new Date().toISOString().slice(0,10)}.xlsx`)
+  }
+
+  // toggle select
+  const toggleSelect = (id) =>
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+
+  const toggleSelectAll = () =>
+    setSelectedIds(selectedIds.length === visitors.length ? [] : visitors.map(v => v.id))
+
+  // quick filters
+  const showToday = () => {
+    const t = new Date().toISOString().slice(0, 10)
+    setSearchStart(t)
+    setSearchEnd(t)
+    setSearchName('')
+    loadVisitors(t, t, '')
+    loadSummary(t, t)
+  }
+
+  const showAll = () => {
+    setSearchStart('')
+    setSearchEnd('')
+    setSearchName('')
+    loadVisitors()
+    loadSummary()
+  }
+
+  const showUncheckout = async () => {
+    const { data, error } = await supabase
+      .from('visitors')
+      .select('*')
+      .is('checkout_time', null)
+      .order('checkin_time', { ascending: false })
+    if (!error) setVisitors(data || [])
+    // summary ยังคงคำนวณตามจริง (ไม่เปลี่ยน)
+  }
+
+  // ---------------- RENDER ----------------
+  return (
+    <div className="container mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="rounded-xl border bg-white/80 backdrop-blur p-4 shadow-sm noprint">
+        <div className="grid md:grid-cols-3 items-center gap-4">
+          <div className="text-blue-800 border border-blue-200 bg-blue-50 px-3 py-2 rounded-lg">
+            🏢 องค์กร: <b>{ORG}</b>
+          </div>
+          <div className="text-emerald-800 border border-emerald-200 bg-emerald-50 px-3 py-2 rounded-lg">
+            📍 สถานที่: <b>{SITE}</b>
+          </div>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="noprint grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="rounded-2xl border shadow-sm p-4 bg-indigo-50/80">
+          <div className="text-sm text-indigo-800">วันนี้เช็คอิน</div>
+          <div className="text-3xl font-semibold text-indigo-900 mt-1">{countToday}</div>
+          <div className="text-xs text-indigo-700 mt-1">ตั้งแต่ {new Date().toLocaleDateString()} 00:00</div>
+        </div>
+        <div className="rounded-2xl border shadow-sm p-4 bg-pink-50/80">
+          <div className="text-sm text-pink-800">ยังอยู่ในพื้นที่ (ยังไม่เช็คเอาท์)</div>
+          <div className="text-3xl font-semibold text-pink-900 mt-1">{countUncheckout}</div>
+          <div className="text-xs text-pink-700 mt-1">อัปเดตแบบเรียลไทม์</div>
+        </div>
+        <div className="rounded-2xl border shadow-sm p-4 bg-amber-50/80">
+          <div className="text-sm text-amber-800">จำนวนในช่วงที่กรอง</div>
+          <div className="text-3xl font-semibold text-amber-900 mt-1">{countRange}</div>
+          <div className="text-xs text-amber-700 mt-1">
+            {searchStart || searchEnd ? `${searchStart || '-'} → ${searchEnd || '-'}` : 'ไม่กำหนดช่วง'}
+          </div>
+        </div>
+        <div className="rounded-2xl border shadow-sm p-4 bg-emerald-50/80">
+          <div className="text-sm text-emerald-800">เช็คเอาท์แล้ววันนี้</div>
+          <div className="text-3xl font-semibold text-emerald-900 mt-1">{countCheckoutToday}</div>
+          <div className="text-xs text-emerald-700 mt-1">จนถึงขณะนี้</div>
+        </div>
+      </div>
+
+      {/* Search & Action Bar */}
+      <div className="noprint rounded-xl bg-white/80 backdrop-blur p-5 shadow-md border border-gray-200">
+        <div className="flex flex-wrap items-end gap-4">
+          {/* จากวันที่ */}
+          <div className="flex flex-col">
+            <label className="text-sm font-medium text-gray-600 mb-1">จากวันที่</label>
+            <input
+              type="date"
+              value={searchStart}
+              onChange={(e) => setSearchStart(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+            />
+          </div>
+
+          {/* ถึงวันที่ */}
+          <div className="flex flex-col">
+            <label className="text-sm font-medium text-gray-600 mb-1">ถึงวันที่</label>
+            <input
+              type="date"
+              value={searchEnd}
+              onChange={(e) => setSearchEnd(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+            />
+          </div>
+
+          {/* ค้นหาชื่อ */}
+          <div className="flex flex-col flex-1 min-w-[200px]">
+            <label className="text-sm font-medium text-gray-600 mb-1">ชื่อผู้มาติดต่อ</label>
+            <input
+              type="text"
+              placeholder="🔎 พิมพ์ชื่อเพื่อตรวจสอบ..."
+              value={searchName}
+              onChange={(e) => setSearchName(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+            />
+          </div>
+
+          {/* ปุ่มคำสั่ง */}
+          <div className="flex flex-wrap gap-3 mt-2">
+            <button
+              onClick={() => loadVisitors(searchStart, searchEnd, searchName)}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium shadow hover:bg-indigo-700 active:scale-[.98] transition"
+            >
+              🔍 ค้นหา
+            </button>
+
+            <button
+              onClick={showToday}
+              className="bg-amber-500 text-white px-4 py-2 rounded-lg font-medium shadow hover:bg-amber-600 active:scale-[.98] transition"
+            >
+              📅 เฉพาะวันนี้
+            </button>
+
+            <button
+              onClick={showAll}
+              className="bg-gray-500 text-white px-4 py-2 rounded-lg font-medium shadow hover:bg-gray-600 active:scale-[.98] transition"
+            >
+              📄 แสดงทั้งหมด
+            </button>
+
+            <button
+              onClick={showUncheckout}
+              className="bg-pink-600 text-white px-4 py-2 rounded-lg font-medium shadow hover:bg-pink-700 active:scale-[.98] transition"
+            >
+              🚪 ยังไม่เช็คเอาท์
+            </button>
+
+            <button
+              onClick={() => exportToExcel(selectedIds)}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium shadow hover:bg-green-700 active:scale-[.98] transition"
+            >
+              📤 Export Excel
+            </button>
+
+            <button
+              onClick={() => deleteVisitor(selectedIds)}
+              className="bg-red-600 text-white px-4 py-2 rounded-lg font-medium shadow hover:bg-red-700 active:scale-[.98] transition"
+            >
+              🗑️ ลบ
+            </button>
+
+            <button
+              onClick={() => navigate('/')}
+              className="bg-gray-800 text-white px-4 py-2 rounded-lg font-medium shadow hover:bg-gray-900 active:scale-[.98] transition"
+            >
+              ↩️ หน้าหลัก
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto shadow rounded border noprint">
+        <table className="table-auto w-full border-collapse text-sm">
+          <thead className="bg-indigo-600 text-white">
+            <tr>
+              <th className="border px-3 py-2 text-center">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.length === visitors.length && visitors.length > 0}
+                  onChange={toggleSelectAll}
+                />
+              </th>
+              <th className="border px-3 py-2">ID</th>
+              <th className="border px-3 py-2">ชื่อ</th>
+              <th className="border px-3 py-2">บริษัท</th>
+              <th className="border px-3 py-2">ติดต่อ</th>
+              <th className="border px-3 py-2">ประสงค์</th>
+              <th className="border px-3 py-2">เวลาเข้า</th>
+              <th className="border px-3 py-2">เวลาออก</th>
+              <th className="border px-3 py-2">สถานะ</th>
+              <th className="border px-3 py-2">พิมพ์</th>
+              <th className="border px-3 py-2">ลบ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visitors.map(v => (
+              <tr
+                key={v.id}
+                className={`hover:bg-gray-50 ${selectedIds.includes(v.id) ? 'bg-yellow-50' : ''}`}
+              >
+                <td className="border px-3 py-2 text-center">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(v.id)}
+                    onChange={() => toggleSelect(v.id)}
+                  />
+                </td>
+                <td className="border px-3 py-2">{v.id}</td>
+                <td className="border px-3 py-2">{v.full_name}</td>
+                <td className="border px-3 py-2">{v.company}</td>
+                <td className="border px-3 py-2">{v.contact_person}</td>
+                <td className="border px-3 py-2">{translatePurpose(v.purpose, v.other_purpose)}</td>
+                <td className="border px-3 py-2">{v.checkin_time ? new Date(v.checkin_time).toLocaleString() : ''}</td>
+                <td className="border px-3 py-2">
+                  {v.checkout_time ? new Date(v.checkout_time).toLocaleString() : <span className="text-gray-400">—</span>}
+                </td>
+                <td className="border px-3 py-2 text-center">
+                  {!v.checkout_time ? (
+                    <button
+                      onClick={() => checkOut(v.id)}
+                      className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
+                    >
+                      เช็คเอาท์
+                    </button>
+                  ) : (
+                    <span className="text-green-600 font-bold">✔ ออกแล้ว</span>
+                  )}
+                </td>
+                <td className="border px-3 py-2 text-center">
+                  <a
+                    href={`/print/${v.id}`}
+                    target="_blank"
+                    className="bg-gray-200 px-3 py-1 rounded hover:bg-gray-300"
+                  >
+                    พิมพ์
+                  </a>
+                </td>
+                <td className="border px-3 py-2 text-center">
+                  <button
+                    onClick={() => deleteVisitor([v.id])}
+                    className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
+                  >
+                    ลบ
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {visitors.length === 0 && (
+              <tr>
+                <td colSpan={11} className="text-center text-gray-500 py-6">
+                  — ไม่มีข้อมูล —
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}

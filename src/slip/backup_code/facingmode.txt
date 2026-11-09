@@ -1,0 +1,66 @@
+import React, { useEffect, useRef, useState } from "react";
+
+export default function CameraToggle() {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [facingMode, setFacingMode] = useState("user"); 
+  // "user" = กล้องหน้า, "environment" = กล้องหลัง
+
+  // ฟังก์ชันเปิดกล้อง
+  const startCamera = async (mode = "user") => {
+    try {
+      // ปิด stream เดิมก่อน (ถ้ามี)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: mode },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("camera error", err);
+    }
+  };
+
+  // init camera
+  useEffect(() => {
+    startCamera(facingMode);
+    return () => {
+      if (streamRef.current)
+        streamRef.current.getTracks().forEach((t) => t.stop());
+    };
+  }, [facingMode]);
+
+  // ปุ่มสลับกล้อง
+  const toggleCamera = () => {
+    setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
+  };
+
+  return (
+    <div>
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        style={{ width: 300, height: 200, background: "#000", borderRadius: 8 }}
+      />
+      <div style={{ marginTop: 10 }}>
+        <button onClick={toggleCamera}>
+          🔄 สลับกล้อง ({facingMode === "user" ? "หน้า" : "หลัง"})
+        </button>
+      </div>
+    </div>
+  );
+}
+-------------------------
+ผมจะเพิ่มปุ่ม "สลับกล้อง หน้า ↔ หลัง" ให้คุณ โดยใช้ facingMode และ state เพื่อเก็บโหมดกล้อง
+📝 วิธีใช้ในโปรเจกต์ของคุณ
+
+นำ component toggleCamera ไปวางแทนโค้ด video เดิม (หรือแทรกปุ่มสลับเข้าไปในหน้า App.jsx)
+
+จะมีปุ่ม "🔄 สลับกล้อง (หน้า/หลัง)" ให้กดสลับได้ทันที
