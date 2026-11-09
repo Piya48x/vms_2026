@@ -83,6 +83,44 @@ npm.cmd run sync:cloud
 
 เครื่องใช้งานจริงตั้ง Windows Scheduled Task ชื่อ `VMS Cloud Sync` ให้เรียก `scripts/start-cloud-sync.ps1` เมื่อผู้ใช้ Login โดยสคริปต์จะเปิด Sync แบบ watch และเริ่มใหม่อัตโนมัติหากโปรเซสหยุด บันทึกสถานะไว้ที่ `logs/cloud-sync.log`
 
+## 4. ลบข้อมูล Cloud หลังเก็บ Local ครบ 1 เดือน
+
+ระบบใช้ `local_archive_receipts` ยืนยันว่าข้อมูลและรูปบันทึกลง PostgreSQL Local สำเร็จแล้ว โดยอายุ 1 เดือนจะเริ่มนับจากเวลาที่ยืนยัน ไม่ใช่วันลงทะเบียน หากข้อมูล Cloud ถูกแก้ไขภายหลัง ต้อง Sync และยืนยันเวอร์ชันใหม่ก่อนจึงจะลบได้
+
+ส่ง migration และ Edge Function ขึ้น Supabase:
+
+```powershell
+npx.cmd supabase db push --remote=grdyyeclxqpkvkcvqdyo --yes
+
+$cleanupToken = [Convert]::ToHexString(
+  [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+).ToLowerInvariant()
+
+npx.cmd supabase secrets set "CLEANUP_TOKEN=$cleanupToken" --remote=grdyyeclxqpkvkcvqdyo --yes
+npx.cmd supabase functions deploy cleanup-archived-visitors --no-verify-jwt --remote=grdyyeclxqpkvkcvqdyo --yes
+$cleanupToken | Set-Clipboard
+```
+
+จากนั้น Restart ตัว Sync เพื่อให้เริ่มสร้างใบยืนยัน:
+
+```powershell
+Stop-ScheduledTask -TaskName "VMS Cloud Sync"
+Start-ScheduledTask -TaskName "VMS Cloud Sync"
+```
+
+สร้าง Supabase Cron Job:
+
+1. Supabase Dashboard > Integrations > Cron > Create job
+2. ชื่อ `visitor-archive-cleanup`
+3. Schedule `15 19 * * *` (ประมาณ 02:15 น. เวลาไทย)
+4. Method `POST`
+5. URL `https://grdyyeclxqpkvkcvqdyo.supabase.co/functions/v1/cleanup-archived-visitors`
+6. Header `Content-Type: application/json`
+7. Header `x-cleanup-token` แล้ววางค่าจาก Clipboard
+8. Body `{}`
+
+ห้ามเปิด Cron ก่อนทดสอบว่ามี receipt และ PostgreSQL Local มีข้อมูล/รูปครบ ระบบ Cleanup จะลบแถวที่ครบกำหนดพร้อมบันทึกพาธรูปลงคิวแบบ atomic จากนั้นลบรูปผ่าน Storage API หาก Storage ขัดข้อง พาธจะค้างใน `storage_deletion_queue` เพื่อให้ Cron รอบถัดไปลองใหม่
+
 ## การทดสอบก่อนใช้งานจริง
 
 1. ลงทะเบียนจากลิงก์ Vercel พร้อมรูปหนึ่งรายการ

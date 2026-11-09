@@ -80,7 +80,7 @@ async function fetchChangedVisitors(since) {
 }
 
 async function downloadPhoto(visitor, existing) {
-  if (!visitor.photo_url || visitor.deleted_at) return existing?.photo_url || null;
+  if (!visitor.photo_url) return existing?.photo_url || null;
   const filename = `cloud_${visitor.id}_${safeFilename(visitor.photo_url)}`;
   const target = path.join(uploadDir, filename);
 
@@ -107,10 +107,12 @@ async function upsertVisitor(visitor) {
   );
   const existing = existingResult.rows[0];
   let photoUrl = existing?.photo_url || null;
+  let archiveReady = true;
 
   try {
     photoUrl = await downloadPhoto(visitor, existing);
   } catch (error) {
+    archiveReady = false;
     console.warn(`Photo sync failed for visitor ${visitor.id}: ${error.message}`);
   }
 
@@ -143,6 +145,26 @@ async function upsertVisitor(visitor) {
      on conflict (cloud_id) do update set ${updates.join(", ")}`,
     values
   );
+
+  return archiveReady;
+}
+
+async function acknowledgeLocalArchive(visitor) {
+  const { error } = await supabase.rpc("acknowledge_local_archive", {
+    archive_visitor_id: visitor.id,
+    archive_source_updated_at: visitor.updated_at,
+  });
+
+  if (!error) return true;
+
+  // Keep the database sync running before the archive-retention migration is
+  // installed. The row will be retried and acknowledged after migration.
+  if (error.code === "PGRST202" || error.code === "42883") {
+    console.warn("Archive receipt RPC is not installed yet; cleanup remains disabled.");
+    return false;
+  }
+
+  throw error;
 }
 
 let running = false;
@@ -155,18 +177,36 @@ async function syncOnce() {
       ? new Date(new Date(state.lastUpdatedAt).getTime() - 5000).toISOString()
       : "1970-01-01T00:00:00.000Z";
     const visitors = await fetchChangedVisitors(previous);
-    for (const visitor of visitors) await upsertVisitor(visitor);
+    let retryFrom = null;
+    let archiveCount = 0;
+
+    for (const visitor of visitors) {
+      const archiveReady = await upsertVisitor(visitor);
+      const acknowledged = archiveReady
+        ? await acknowledgeLocalArchive(visitor)
+        : false;
+
+      if (acknowledged) {
+        archiveCount += 1;
+      } else if (!retryFrom || visitor.updated_at < retryFrom) {
+        retryFrom = visitor.updated_at;
+      }
+    }
 
     const latest = visitors.reduce(
       (value, visitor) => (!value || visitor.updated_at > value ? visitor.updated_at : value),
       state.lastUpdatedAt || null
     );
     await writeState({
-      lastUpdatedAt: latest,
+      lastUpdatedAt: retryFrom || latest,
       lastRunAt: new Date().toISOString(),
       lastCount: visitors.length,
+      lastArchiveCount: archiveCount,
+      retryFrom,
     });
-    console.log(`[cloud-sync] ${visitors.length} row(s) synchronized at ${new Date().toLocaleString("th-TH")}`);
+    console.log(
+      `[cloud-sync] ${visitors.length} row(s) synchronized, ${archiveCount} archive receipt(s) confirmed at ${new Date().toLocaleString("th-TH")}`
+    );
   } finally {
     running = false;
   }
