@@ -23,6 +23,8 @@ npx.cmd supabase login
 npx.cmd supabase link --project-ref YOUR_PROJECT_REF
 npx.cmd supabase db push --remote
 npx.cmd supabase functions deploy register-visitor --no-verify-jwt
+npx.cmd supabase secrets set REPORT_ADMIN_PIN=1234 --remote=YOUR_PROJECT_REF --yes
+npx.cmd supabase functions deploy report-api --no-verify-jwt --remote=YOUR_PROJECT_REF --yes
 ```
 
 Supabase CLI v3 ใช้ Local stack เป็นค่าเริ่มต้น จึงต้องใส่ `--remote` เพื่อส่ง migration ขึ้น Cloud โดยไม่ต้องใช้ Docker คำสั่งนี้จะสร้างตาราง, RLS, Realtime, RPC summary และ Storage bucket `visitor-photos`
@@ -32,6 +34,8 @@ Supabase CLI v3 ใช้ Local stack เป็นค่าเริ่มต้
 1. Supabase Dashboard > Authentication > Users
 2. Add user > Create new user
 3. ใส่อีเมลและรหัสผ่านของผู้ดูแล
+
+หน้า Report ป้องกัน 2 ชั้น: Supabase Authentication จะจำ session การล็อกอินไว้ ส่วน PIN จะเก็บใน Supabase Secret และต้องกรอกใหม่ทุกครั้งที่เปิดหรือรีเฟรช `/Report` ห้ามเพิ่ม `REPORT_ADMIN_PIN` ใน Vercel หรือไฟล์ frontend
 
 ## 2. ตั้งค่า Vercel
 
@@ -80,7 +84,8 @@ npm.cmd run sync:cloud
 ## การทดสอบก่อนใช้งานจริง
 
 1. ลงทะเบียนจากลิงก์ Vercel พร้อมรูปหนึ่งรายการ
-2. เข้า `/Report` ด้วยอีเมลผู้ดูแลและตรวจ Realtime
-3. รัน `npm run sync:once`
-4. ตรวจแถวใน PostgreSQL และไฟล์ใน `data/uploads`
-5. ห้ามเปิด PostgreSQL port 5432 บน Router/Internet
+2. เข้า `/Report` ด้วยอีเมลผู้ดูแล จากนั้นใส่ PIN และตรวจข้อมูล
+3. รีเฟรช `/Report` ต้องไม่ถามอีเมลซ้ำ แต่ต้องถาม PIN ใหม่
+4. รัน `npm run sync:once`
+5. ตรวจแถวใน PostgreSQL และไฟล์ใน `data/uploads`
+6. ห้ามเปิด PostgreSQL port 5432 บน Router/Internet

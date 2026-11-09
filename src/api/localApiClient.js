@@ -34,6 +34,7 @@ export const localAdminApi = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  verifyPin: async () => ({ ok: true }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
 };
 

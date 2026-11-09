@@ -37,6 +37,7 @@ import ExcelJS from "exceljs";
 import { saveAs } from "file-saver";
 import { useNavigate } from "react-router-dom";
 import bgImage from "../img/g.jpg";
+import ReportAccess from "./ReportAccess";
 
 const ORG = import.meta.env.VITE_ORG_NAME || "TDK INDUSTRIAL";
 const THAI_TIME_ZONE = "Asia/Bangkok";
@@ -46,28 +47,6 @@ const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) =>
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) =>
   String(minute).padStart(2, "0")
 );
-
-let reportAuthenticationPromise;
-
-function ensureReportAuthentication() {
-  if (!reportAuthenticationPromise) {
-    reportAuthenticationPromise = (async () => {
-      try {
-        await adminApi.me();
-      } catch {
-        const username = prompt(dataMode === "supabase" ? "Admin email:" : "Username:");
-        const password = prompt("Password:");
-        if (!username || !password) throw new Error("cancelled");
-        await adminApi.login(username, password);
-      }
-    })().catch((error) => {
-      reportAuthenticationPromise = undefined;
-      throw error;
-    });
-  }
-
-  return reportAuthenticationPromise;
-}
 
 // --- Helpers ---
 const dateFormatter = new Intl.DateTimeFormat("th-TH", {
@@ -284,7 +263,14 @@ export default function Report() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authStage, setAuthStage] = useState("checking");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [pinValue, setPinValue] = useState("");
+  const [authUserEmail, setAuthUserEmail] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [isAuthBusy, setIsAuthBusy] = useState(false);
+  const isAuthenticated = authStage === "ready";
 
   const toggleTheme = () => {
     setIsDarkMode((current) => {
@@ -408,47 +394,101 @@ export default function Report() {
 
   useEffect(() => {
     let active = true;
-    const authenticate = async () => {
-      try {
-        await ensureReportAuthentication();
-      } catch {
-        if (active) {
-          alert("❌ ไม่อนุญาตให้เข้าถึง");
-          navigate("/");
-        }
-        return;
+    adminApi.me()
+      .then((account) => {
+        if (!active) return;
+        setAuthUserEmail(account.username || account.user?.email || "");
+        setAuthStage(dataMode === "supabase" ? "pin" : "ready");
+      })
+      .catch(() => {
+        if (active) setAuthStage("login");
+      });
+
+    return () => { active = false; };
+  }, []);
+
+  const handleAdminLogin = async (event) => {
+    event.preventDefault();
+    setIsAuthBusy(true);
+    setAuthError("");
+    try {
+      const account = await adminApi.login(loginEmail.trim(), loginPassword);
+      setAuthUserEmail(account.username || account.user?.email || loginEmail.trim());
+      setLoginPassword("");
+      setAuthStage(dataMode === "supabase" ? "pin" : "ready");
+    } catch (error) {
+      console.error("Unable to sign in", error);
+      setAuthError("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
+
+  const handlePinVerification = async (event) => {
+    event.preventDefault();
+    setIsAuthBusy(true);
+    setAuthError("");
+    try {
+      await adminApi.verifyPin(pinValue);
+      setPinValue("");
+      setAuthStage("ready");
+    } catch (error) {
+      console.error("Unable to verify report PIN", error);
+      if (error?.status === 401 && /session/i.test(error.message || "")) {
+        setAuthStage("login");
+        setAuthError("Session หมดอายุ กรุณาเข้าสู่ระบบใหม่");
+      } else {
+        setAuthError("PIN ไม่ถูกต้อง");
       }
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
 
-      if (!active) return;
-      setIsAuthenticated(true);
-      setIsLoading(true);
+  const handleAdminLogout = async () => {
+    setIsAuthBusy(true);
+    setAuthError("");
+    try {
+      await adminApi.logout();
+    } catch (error) {
+      console.error("Unable to sign out", error);
+    } finally {
+      setPinValue("");
+      setLoginPassword("");
+      setAuthUserEmail("");
+      setAuthStage("login");
+      setIsAuthBusy(false);
+    }
+  };
 
-      try {
-        const [initialVisitors, initialSummary, initialQueue] = await Promise.all([
-          visitorsApi.list({ filter: "TODAY", orderBy: "id", order: "desc" }),
-          visitorsApi.summary(),
-          visitorsApi.list({
-            staying: true,
-            orderBy: "checkin_time",
-            order: "asc",
-            limit: 6,
-          }),
-        ]);
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    let active = true;
+    setIsLoading(true);
 
+    Promise.all([
+      visitorsApi.list({ filter: "TODAY", orderBy: "id", order: "desc" }),
+      visitorsApi.summary(),
+      visitorsApi.list({
+        staying: true,
+        orderBy: "checkin_time",
+        order: "asc",
+        limit: 6,
+      }),
+    ])
+      .then(([initialVisitors, initialSummary, initialQueue]) => {
         if (!active) return;
         setVisitors(initialVisitors || []);
         setSummary(initialSummary);
         setCheckoutQueue(initialQueue || []);
-      } catch (error) {
-        console.error("Unable to load the report", error);
-      } finally {
+      })
+      .catch((error) => console.error("Unable to load the report", error))
+      .finally(() => {
         if (active) setIsLoading(false);
-      }
-    };
+      });
 
-    authenticate();
     return () => { active = false; };
-  }, [navigate]);
+  }, [isAuthenticated]);
 
   // ค้นหาส่วนนี้ในไฟล์ Report.jsx
   useEffect(() => {
@@ -918,6 +958,36 @@ export default function Report() {
     { id: "CHECKOUT_TODAY", label: "ออกวันนี้", icon: CheckCircle },
     { id: "ALL", label: "ทั้งหมด", icon: ClipboardList },
   ];
+
+  if (!isAuthenticated) {
+    return (
+      <ReportAccess
+        stage={authStage}
+        email={loginEmail}
+        password={loginPassword}
+        pin={pinValue}
+        userEmail={authUserEmail}
+        error={authError}
+        busy={isAuthBusy}
+        onEmailChange={(value) => {
+          setLoginEmail(value);
+          setAuthError("");
+        }}
+        onPasswordChange={(value) => {
+          setLoginPassword(value);
+          setAuthError("");
+        }}
+        onPinChange={(value) => {
+          setPinValue(value);
+          setAuthError("");
+        }}
+        onLogin={handleAdminLogin}
+        onVerifyPin={handlePinVerification}
+        onLogout={handleAdminLogout}
+        onBack={() => navigate("/")}
+      />
+    );
+  }
 
   return (
     <div
