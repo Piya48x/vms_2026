@@ -81,6 +81,8 @@ npm.cmd run sync:cloud
 
 ข้อมูลจะเข้า PostgreSQL ตาราง `visitors` และรูปจะอยู่ที่ `data/uploads` หากเครื่องปิด ข้อมูลจะค้างอยู่บน Supabase และ Sync ต่อเมื่อเปิดเครื่องใหม่
 
+เครื่องใช้งานจริงตั้ง Windows Scheduled Task ชื่อ `VMS Cloud Sync` ให้เรียก `scripts/start-cloud-sync.ps1` เมื่อผู้ใช้ Login โดยสคริปต์จะเปิด Sync แบบ watch และเริ่มใหม่อัตโนมัติหากโปรเซสหยุด บันทึกสถานะไว้ที่ `logs/cloud-sync.log`
+
 ## การทดสอบก่อนใช้งานจริง
 
 1. ลงทะเบียนจากลิงก์ Vercel พร้อมรูปหนึ่งรายการ
