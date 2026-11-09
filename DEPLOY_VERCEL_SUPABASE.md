@@ -92,9 +92,10 @@ npm.cmd run sync:cloud
 ```powershell
 npx.cmd supabase db push --remote=grdyyeclxqpkvkcvqdyo --yes
 
-$cleanupToken = [Convert]::ToHexString(
-  [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
-).ToLowerInvariant()
+$cleanupToken = (
+  [guid]::NewGuid().ToString("N") +
+  [guid]::NewGuid().ToString("N")
+)
 
 npx.cmd supabase secrets set "CLEANUP_TOKEN=$cleanupToken" --remote=grdyyeclxqpkvkcvqdyo --yes
 npx.cmd supabase functions deploy cleanup-archived-visitors --no-verify-jwt --remote=grdyyeclxqpkvkcvqdyo --yes
