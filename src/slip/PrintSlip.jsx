@@ -2,8 +2,9 @@ import React, { useEffect, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { visitorsApi } from "../apiClient";
 
-const ORG = import.meta.env.VITE_ORG_NAME || "Just-iD Visitor";
-const SITE = import.meta.env.VITE_SITE_NAME || "Global Securitech";
+const ORG = import.meta.env.VITE_ORG_NAME || "T.D.K. INDUSTRIA";
+const SITE =
+  import.meta.env.VITE_SITE_NAME || "บริษัท ที.ดี.เค.อินดัสเตรียล จำกัด";
 const LOGO_URL = import.meta.env.VITE_LOGO_URL || "/logo/f.png";
 
 /* 🔧 ปรับค่านี้ถ้ากระดาษยังเอียง */
