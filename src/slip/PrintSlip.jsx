@@ -32,10 +32,17 @@ export default function PrintSlip({ id: propId, inModal = false }) {
               window.print();
               printedRef.current = true;
 
-              // ใช้ร่วมกับ --kiosk-printing
-              setTimeout(() => {
-                window.close();
-              }, 500);
+              if (window.parent !== window) {
+                window.parent.postMessage(
+                  { type: "vms:auto-print-complete", id: String(id) },
+                  window.location.origin
+                );
+              } else {
+                // ใช้ร่วมกับ --kiosk-printing
+                setTimeout(() => {
+                  window.close();
+                }, 500);
+              }
             }
           }, 800);
         }

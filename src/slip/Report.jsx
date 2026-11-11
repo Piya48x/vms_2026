@@ -270,6 +270,8 @@ export default function Report() {
   const [authUserEmail, setAuthUserEmail] = useState("");
   const [authError, setAuthError] = useState("");
   const [isAuthBusy, setIsAuthBusy] = useState(false);
+  const [autoPrintQueue, setAutoPrintQueue] = useState([]);
+  const [autoPrintId, setAutoPrintId] = useState(null);
   const isAuthenticated = authStage === "ready";
 
   const toggleTheme = () => {
@@ -315,6 +317,14 @@ export default function Report() {
 
   const navigate = useNavigate();
   const printedIdsRef = useRef(new Set());
+
+  const queueAutoPrint = useCallback((visitorId) => {
+    const normalizedId = String(visitorId || "");
+    if (!normalizedId || printedIdsRef.current.has(normalizedId)) return;
+
+    printedIdsRef.current.add(normalizedId);
+    setAutoPrintQueue((current) => [...current, normalizedId]);
+  }, []);
 
   // --- Core Loading Logic ---
   const loadVisitors = useCallback(
@@ -501,16 +511,38 @@ export default function Report() {
 
           // --- ส่วนที่ต้องมั่นใจว่ามี เพื่อให้หน้าสลิปเด้งขึ้นมาอัตโนมัติ ---
           // ใน Report.jsx
-          if (payload.eventType === "INSERT") {
-            const newId = payload.new.id;
-            if (!printedIdsRef.current.has(newId)) {
-              printedIdsRef.current.add(newId);
-              window.open(`/print/${newId}`, "_blank"); // ต้องอนุญาต Pop-up ในเบราว์เซอร์ด้วย
-            }
+          if (payload.eventType === "INSERT" && payload.new?.id) {
+            queueAutoPrint(payload.new.id);
           }
         });
     return unsubscribe;
-  }, [isAuthenticated, activeFilter, loadVisitors, loadCheckoutQueue]);
+  }, [isAuthenticated, activeFilter, loadVisitors, loadCheckoutQueue, queueAutoPrint]);
+
+  useEffect(() => {
+    if (autoPrintId || autoPrintQueue.length === 0) return;
+    setAutoPrintId(autoPrintQueue[0]);
+    setAutoPrintQueue((current) => current.slice(1));
+  }, [autoPrintId, autoPrintQueue]);
+
+  useEffect(() => {
+    const handlePrintComplete = (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "vms:auto-print-complete") return;
+
+      setAutoPrintId((current) =>
+        String(current) === String(event.data.id) ? null : current
+      );
+    };
+
+    window.addEventListener("message", handlePrintComplete);
+    return () => window.removeEventListener("message", handlePrintComplete);
+  }, []);
+
+  useEffect(() => {
+    if (!autoPrintId) return undefined;
+    const fallbackTimer = setTimeout(() => setAutoPrintId(null), 20000);
+    return () => clearTimeout(fallbackTimer);
+  }, [autoPrintId]);
 
   useEffect(() => {
     if (isSidebarCollapsed) return undefined;
@@ -1000,6 +1032,24 @@ export default function Report() {
           : "radial-gradient(circle at 8% 0%, rgba(0, 51, 153, 0.08), transparent 28%), radial-gradient(circle at 92% 10%, rgba(0, 78, 204, 0.07), transparent 25%)",
       }}
     >
+      {autoPrintId && (
+        <iframe
+          key={autoPrintId}
+          src={`/print/${encodeURIComponent(autoPrintId)}?source=report-auto-print`}
+          title="พิมพ์สลิปผู้มาติดต่ออัตโนมัติ"
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            left: "-10000px",
+            top: 0,
+            width: "80mm",
+            height: "200mm",
+            border: 0,
+            opacity: 0,
+            pointerEvents: "none",
+          }}
+        />
+      )}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai+Looped:wght@400;500;600;700&display=swap');
         .report-shell,

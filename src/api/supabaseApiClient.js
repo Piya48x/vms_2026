@@ -128,7 +128,65 @@ export const supabaseVisitorsApi = {
   removeMany: (ids) => reportRequest("removeMany", { ids }),
 
   subscribe(callback) {
-    const timer = setInterval(() => callback({ eventType: "REFRESH" }), 30000);
-    return () => clearInterval(timer);
+    let stopped = false;
+    let polling = false;
+    let latestSeenId = null;
+    const startedAt = Date.now();
+
+    const pollForNewVisitors = async () => {
+      if (stopped || polling) return;
+      polling = true;
+
+      try {
+        const rows = await reportRequest("list", {
+          params: { orderBy: "id", order: "desc", limit: 25 },
+        });
+        if (stopped) return;
+
+        const orderedRows = (rows || [])
+          .filter((row) => Number.isFinite(Number(row.id)))
+          .sort((left, right) => Number(left.id) - Number(right.id));
+        const newestId = orderedRows.length
+          ? Number(orderedRows[orderedRows.length - 1].id)
+          : 0;
+
+        if (latestSeenId === null) {
+          latestSeenId = newestId;
+
+          // Do not print old records when the report is first opened. A record
+          // created while this first request was in flight is still considered new.
+          orderedRows
+            .filter((row) => new Date(row.created_at).getTime() >= startedAt)
+            .forEach((row) => callback({ eventType: "INSERT", new: row }));
+          return;
+        }
+
+        const insertedRows = orderedRows.filter(
+          (row) => Number(row.id) > latestSeenId
+        );
+        if (newestId > latestSeenId) latestSeenId = newestId;
+
+        insertedRows.forEach((row) =>
+          callback({ eventType: "INSERT", new: row })
+        );
+      } catch (error) {
+        console.warn("Unable to check for new visitors", error);
+      } finally {
+        polling = false;
+      }
+    };
+
+    pollForNewVisitors();
+    const insertTimer = setInterval(pollForNewVisitors, 5000);
+    const refreshTimer = setInterval(
+      () => callback({ eventType: "REFRESH" }),
+      30000
+    );
+
+    return () => {
+      stopped = true;
+      clearInterval(insertTimer);
+      clearInterval(refreshTimer);
+    };
   },
 };
