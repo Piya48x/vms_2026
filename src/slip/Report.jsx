@@ -529,9 +529,12 @@ export default function Report() {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type !== "vms:auto-print-complete") return;
 
-      setAutoPrintId((current) =>
-        String(current) === String(event.data.id) ? null : current
-      );
+      // Keep the slip visible briefly so staff can see that printing completed.
+      window.setTimeout(() => {
+        setAutoPrintId((current) =>
+          String(current) === String(event.data.id) ? null : current
+        );
+      }, 800);
     };
 
     window.addEventListener("message", handlePrintComplete);
@@ -1033,22 +1036,35 @@ export default function Report() {
       }}
     >
       {autoPrintId && (
-        <iframe
-          key={autoPrintId}
-          src={`/print/${encodeURIComponent(autoPrintId)}?source=report-auto-print`}
-          title="พิมพ์สลิปผู้มาติดต่ออัตโนมัติ"
-          aria-hidden="true"
-          style={{
-            position: "fixed",
-            left: "-10000px",
-            top: 0,
-            width: "80mm",
-            height: "200mm",
-            border: 0,
-            opacity: 0,
-            pointerEvents: "none",
-          }}
-        />
+        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-[#07152f]/70 p-4 backdrop-blur-sm">
+          <div className="overflow-hidden rounded-[24px] border border-blue-100 bg-white shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
+            <div className="flex items-center justify-between gap-5 border-b border-blue-100 bg-[#f7faff] px-5 py-4">
+              <div>
+                <p className="text-base font-bold text-[#003399]">
+                  พบผู้มาติดต่อใหม่
+                </p>
+                <p className="mt-0.5 text-sm font-medium text-[#5071a5]">
+                  กำลังส่งสลิปไปยังเครื่องพิมพ์อัตโนมัติ
+                </p>
+              </div>
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#003399] text-white">
+                <Printer size={21} className="animate-pulse" />
+              </div>
+            </div>
+            <iframe
+              key={autoPrintId}
+              src={`/print/${encodeURIComponent(autoPrintId)}?source=report-auto-print`}
+              title="พิมพ์สลิปผู้มาติดต่ออัตโนมัติ"
+              style={{
+                display: "block",
+                width: "min(80mm, calc(100vw - 32px))",
+                height: "min(72vh, 720px)",
+                border: 0,
+                background: "white",
+              }}
+            />
+          </div>
+        </div>
       )}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai+Looped:wght@400;500;600;700&display=swap');
