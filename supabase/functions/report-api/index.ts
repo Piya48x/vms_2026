@@ -131,6 +131,18 @@ Deno.serve(async (request) => {
       return json(Array.isArray(data) ? data[0] : data);
     }
 
+    if (action === "latest") {
+      const limit = Math.min(50, Math.max(1, Number(payload.limit || 25)));
+      const { data, error } = await supabase
+        .from("visitors")
+        .select("id,created_at")
+        .is("deleted_at", null)
+        .order("id", { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return json(data || []);
+    }
+
     if (action === "list") {
       const params = payload.params || {};
       let query = supabase.from("visitors").select("*").is("deleted_at", null);

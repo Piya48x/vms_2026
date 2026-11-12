@@ -505,15 +505,14 @@ export default function Report() {
   useEffect(() => {
     if (!isAuthenticated) return undefined;
     const unsubscribe = visitorsApi.subscribe((payload) => {
+          if (payload.eventType === "INSERT" && payload.new?.id) {
+            // Prioritize opening the print frame before refreshing dashboard data.
+            queueAutoPrint(payload.new.id);
+          }
+
           loadSummary();
           loadVisitors(activeFilter, { silent: true });
           loadCheckoutQueue();
-
-          // --- ส่วนที่ต้องมั่นใจว่ามี เพื่อให้หน้าสลิปเด้งขึ้นมาอัตโนมัติ ---
-          // ใน Report.jsx
-          if (payload.eventType === "INSERT" && payload.new?.id) {
-            queueAutoPrint(payload.new.id);
-          }
         });
     return unsubscribe;
   }, [isAuthenticated, activeFilter, loadVisitors, loadCheckoutQueue, queueAutoPrint]);

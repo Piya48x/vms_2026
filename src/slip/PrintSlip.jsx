@@ -26,25 +26,38 @@ export default function PrintSlip({ id: propId, inModal = false }) {
         setV(data);
 
         if (!inModal) {
-          // หน่วงเวลาให้ layout + รูป โหลดครบก่อน
+          // Allow React to commit the receipt, then wait for images/fonts. This
+          // is faster than a fixed long delay and avoids printing an empty logo.
           setTimeout(() => {
             if (!printedRef.current) {
-              window.print();
-              printedRef.current = true;
+              const imageLoads = Array.from(document.images).map((image) =>
+                image.complete
+                  ? image.decode?.().catch(() => undefined)
+                  : new Promise((resolve) => {
+                    image.addEventListener("load", resolve, { once: true });
+                    image.addEventListener("error", resolve, { once: true });
+                  })
+              );
 
-              if (window.parent !== window) {
-                window.parent.postMessage(
-                  { type: "vms:auto-print-complete", id: String(id) },
-                  window.location.origin
-                );
-              } else {
-                // ใช้ร่วมกับ --kiosk-printing
-                setTimeout(() => {
-                  window.close();
-                }, 500);
-              }
+              Promise.all([document.fonts?.ready, ...imageLoads]).then(() => {
+                if (printedRef.current) return;
+                window.print();
+                printedRef.current = true;
+
+                if (window.parent !== window) {
+                  window.parent.postMessage(
+                    { type: "vms:auto-print-complete", id: String(id) },
+                    window.location.origin
+                  );
+                } else {
+                  // ใช้ร่วมกับ --kiosk-printing
+                  setTimeout(() => {
+                    window.close();
+                  }, 500);
+                }
+              });
             }
-          }, 800);
+          }, 150);
         }
       } catch (error) {
         console.error("Unable to load print data", error);

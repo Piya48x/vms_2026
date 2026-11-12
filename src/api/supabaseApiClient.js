@@ -130,17 +130,29 @@ export const supabaseVisitorsApi = {
   subscribe(callback) {
     let stopped = false;
     let polling = false;
-    let latestSeenId = null;
+    let baselineId = null;
+    let realtimeChannel = null;
+    let realtimeReady = false;
+    let fallbackTimer = null;
+    const seenVisitorIds = new Set();
     const startedAt = Date.now();
+
+    const emitInsert = (row) => {
+      const rowId = Number(row?.id);
+      if (!Number.isFinite(rowId)) return;
+
+      const key = String(rowId);
+      if (seenVisitorIds.has(key)) return;
+      seenVisitorIds.add(key);
+      callback({ eventType: "INSERT", new: row });
+    };
 
     const pollForNewVisitors = async () => {
       if (stopped || polling) return;
       polling = true;
 
       try {
-        const rows = await reportRequest("list", {
-          params: { orderBy: "id", order: "desc", limit: 25 },
-        });
+        const rows = await reportRequest("latest", { limit: 25 });
         if (stopped) return;
 
         const orderedRows = (rows || [])
@@ -150,25 +162,27 @@ export const supabaseVisitorsApi = {
           ? Number(orderedRows[orderedRows.length - 1].id)
           : 0;
 
-        if (latestSeenId === null) {
-          latestSeenId = newestId;
-
+        if (baselineId === null) {
           // Do not print old records when the report is first opened. A record
           // created while this first request was in flight is still considered new.
-          orderedRows
-            .filter((row) => new Date(row.created_at).getTime() >= startedAt)
-            .forEach((row) => callback({ eventType: "INSERT", new: row }));
+          baselineId = newestId;
+          orderedRows.forEach((row) => {
+            if (new Date(row.created_at).getTime() >= startedAt) {
+              emitInsert(row);
+            } else {
+              seenVisitorIds.add(String(Number(row.id)));
+            }
+          });
           return;
         }
 
         const insertedRows = orderedRows.filter(
-          (row) => Number(row.id) > latestSeenId
+          (row) =>
+            Number(row.id) > baselineId &&
+            !seenVisitorIds.has(String(Number(row.id)))
         );
-        if (newestId > latestSeenId) latestSeenId = newestId;
-
-        insertedRows.forEach((row) =>
-          callback({ eventType: "INSERT", new: row })
-        );
+        insertedRows.forEach(emitInsert);
+        if (newestId > baselineId) baselineId = newestId;
       } catch (error) {
         console.warn("Unable to check for new visitors", error);
       } finally {
@@ -176,8 +190,44 @@ export const supabaseVisitorsApi = {
       }
     };
 
-    pollForNewVisitors();
-    const insertTimer = setInterval(pollForNewVisitors, 5000);
+    const scheduleFallback = () => {
+      if (stopped) return;
+      const delay = realtimeReady ? 15000 : 1500;
+      fallbackTimer = window.setTimeout(async () => {
+        await pollForNewVisitors();
+        scheduleFallback();
+      }, delay);
+    };
+
+    const connectRealtime = async () => {
+      try {
+        await supabase.realtime.setAuth();
+        if (stopped) return;
+
+        realtimeChannel = supabase
+          .channel("vms-report", { config: { private: true } })
+          .on(
+            "broadcast",
+            { event: "visitor_insert" },
+            (message) => emitInsert(message?.payload || message)
+          )
+          .subscribe((status) => {
+            realtimeReady = status === "SUBSCRIBED";
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+              console.warn("Realtime visitor notifications unavailable; using fallback polling");
+            }
+          });
+      } catch (error) {
+        realtimeReady = false;
+        console.warn("Unable to connect visitor Realtime channel", error);
+      }
+    };
+
+    pollForNewVisitors().finally(() => {
+      if (stopped) return;
+      connectRealtime();
+      scheduleFallback();
+    });
     const refreshTimer = setInterval(
       () => callback({ eventType: "REFRESH" }),
       30000
@@ -185,8 +235,9 @@ export const supabaseVisitorsApi = {
 
     return () => {
       stopped = true;
-      clearInterval(insertTimer);
+      if (fallbackTimer) clearTimeout(fallbackTimer);
       clearInterval(refreshTimer);
+      if (realtimeChannel) supabase.removeChannel(realtimeChannel);
     };
   },
 };
