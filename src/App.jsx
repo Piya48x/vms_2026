@@ -608,6 +608,9 @@ const analyzeCardFrame = (source, canvas) => {
 };
 
 export default function App() {
+  const isEmbeddedRegistration =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("embedded") === "report";
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
@@ -1024,6 +1027,12 @@ useEffect(() => {
       setHistoryList(updatedHistory);
 
       setStep(3);
+      if (isEmbeddedRegistration && window.parent !== window) {
+        window.parent.postMessage(
+          { type: "vms:registration-complete" },
+          window.location.origin
+        );
+      }
     } catch (err) {
       console.error("Visitor registration failed", err);
 
@@ -1076,7 +1085,7 @@ useEffect(() => {
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isEmbeddedRegistration ? "embedded-registration" : ""}`}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap');
         :root { 
@@ -1101,6 +1110,11 @@ useEffect(() => {
           padding: 20px;
           padding-top: 80px; /* เพิ่ม padding-top ให้พอดีกับปุ่มภาษา */
           position: relative;
+        }
+        .app-shell.embedded-registration {
+          min-height: 100%;
+          padding-top: 72px;
+          padding-bottom: 32px;
         }
         
        /* Language Switcher Styles */

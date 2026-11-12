@@ -272,6 +272,7 @@ export default function Report() {
   const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [autoPrintQueue, setAutoPrintQueue] = useState([]);
   const [autoPrintId, setAutoPrintId] = useState(null);
+  const [isRegistrationOpen, setIsRegistrationOpen] = useState(false);
   const isAuthenticated = authStage === "ready";
 
   const toggleTheme = () => {
@@ -524,8 +525,12 @@ export default function Report() {
   }, [autoPrintId, autoPrintQueue]);
 
   useEffect(() => {
-    const handlePrintComplete = (event) => {
+    const handleFrameMessage = (event) => {
       if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "vms:registration-complete") {
+        setIsRegistrationOpen(false);
+        return;
+      }
       if (event.data?.type !== "vms:auto-print-complete") return;
 
       // Keep the slip visible briefly so staff can see that printing completed.
@@ -536,9 +541,18 @@ export default function Report() {
       }, 800);
     };
 
-    window.addEventListener("message", handlePrintComplete);
-    return () => window.removeEventListener("message", handlePrintComplete);
+    window.addEventListener("message", handleFrameMessage);
+    return () => window.removeEventListener("message", handleFrameMessage);
   }, []);
+
+  useEffect(() => {
+    if (!isRegistrationOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setIsRegistrationOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isRegistrationOpen]);
 
   useEffect(() => {
     if (!autoPrintId) return undefined;
@@ -1065,6 +1079,37 @@ export default function Report() {
           </div>
         </div>
       )}
+      {isRegistrationOpen && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-[#07152f]/75 p-3 backdrop-blur-sm sm:p-6">
+          <div className="flex h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-[24px] border border-blue-100 bg-white shadow-[0_30px_100px_rgba(0,0,0,0.4)]">
+            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-blue-100 bg-[#f7faff] px-5 py-4 sm:px-6">
+              <div>
+                <p className="text-lg font-bold text-[#003399]">
+                  ลงทะเบียนผู้มาติดต่อ
+                </p>
+                <p className="mt-0.5 text-sm font-medium text-[#5071a5]">
+                  ถ่ายรูปบัตรและกรอกข้อมูลโดยไม่ออกจากหน้า Report
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRegistrationOpen(false)}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-[#d8e4f7] bg-white text-[#315184] transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600"
+                title="ปิดหน้าลงทะเบียน"
+                aria-label="ปิดหน้าลงทะเบียน"
+              >
+                <X size={22} />
+              </button>
+            </div>
+            <iframe
+              src="/?embedded=report"
+              title="ฟอร์มลงทะเบียนผู้มาติดต่อ"
+              allow="camera"
+              className="min-h-0 w-full flex-1 border-0 bg-[#f0f4f8]"
+            />
+          </div>
+        </div>
+      )}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai+Looped:wght@400;500;600;700&display=swap');
         .report-shell,
@@ -1386,7 +1431,7 @@ export default function Report() {
                 )}
                 <button
                   type="button"
-                  onClick={() => navigate("/")}
+                  onClick={() => setIsRegistrationOpen(true)}
                   className="inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-xl border-2 border-[#003399] bg-white px-3 text-sm font-semibold text-[#003399] transition hover:bg-[#eef4ff]"
                 >
                   <UserCheck size={16} /> ลงทะเบียนผู้ติดต่อ
